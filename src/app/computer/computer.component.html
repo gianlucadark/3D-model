@@ -1,0 +1,73 @@
+<div class="scroll-container">
+
+
+  <!-- Sezione introduttiva -->
+  <section class="intro-section">
+    <div class="intro-content">
+      <h1>Benvenuto nella tua postazione</h1>
+      <p>Scorri per esplorare il setup gaming realistico...</p>
+      <div class="sound-notice">
+        🔊 Attiva l'audio per un'esperienza immersiva
+      </div>
+    </div>
+
+  </section>
+
+  <!-- Sezione modello 3D -->
+  <section class="model-section" #modelSection>
+    <div class="model-container">
+      <canvas #threeCanvas class="three-canvas"></canvas>
+      <div #hoverButton class="hover-button">Clicca qui</div>
+
+      <!-- Modal per tastoMice -->
+      <div class="modal-backdrop" *ngIf="isTastoMiceModalVisible">
+        <app-screen [isVisible]="isTastoMiceModalVisible" [closeButtonText]="'Chiudi'" (close)="closeTastoMiceModal()">
+        </app-screen>
+      </div>
+
+      <!-- Modal per Ricerca e Sviluppo -->
+      <app-research-modal [isVisible]="isResearchModalVisible" (close)="closeResearchModal()">
+      </app-research-modal>
+
+      <!-- Modal per Robot Dog -->
+      <app-robot-dog-modal [isVisible]="isRobotDogModalVisible" (close)="closeRobotDogModal()">
+      </app-robot-dog-modal>
+      <div class="interaction-hint">
+        <div class="hint-text">
+          <span>🎮 Usa il mouse per navigare</span>
+        </div>
+
+        <button class="zoom-toggle" (click)="toggleZoom()">
+          <span *ngIf="!zoomEnabled">🔍 Attiva zoom</span>
+          <span *ngIf="zoomEnabled">🚫 Disattiva zoom</span>
+        </button>
+        <button class="dark-toggle" (click)="toggleDarkMode()" style="margin-left:8px;">
+          <span *ngIf="isDarkMode">☀️ Light mode</span>
+          <span *ngIf="!isDarkMode">🌙 Dark mode</span>
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Sezione finale -->
+  <section class="final-section">
+    <div class="final-content">
+      <h2>Esplorazione completata</h2>
+      <p>Grazie per aver visitato la postazione!</p>
+      <div class="stats">
+        <div class="stat-item">
+          <span class="stat-value">3</span>
+          <span class="stat-label">Schermi</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-value">1</span>
+          <span class="stat-label">Setup Gaming</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-value">∞</span>
+          <span class="stat-label">Possibilità</span>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>

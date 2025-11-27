@@ -1,0 +1,40 @@
+<div class="modal-backdrop" *ngIf="isVisible" (click)="onClose()">
+    <div class="modal-card" (click)="$event.stopPropagation()">
+        <div class="modal-header">
+            <h2>Compagno Robotico</h2>
+            <button class="btn-close" (click)="onClose()">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                    <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+            </button>
+        </div>
+
+        <div class="modal-body">
+            <div class="image-container">
+                <!-- Placeholder image for robot dog -->
+                <img src="https://images.unsplash.com/photo-1485827404703-89b55fcc595e?auto=format&fit=crop&w=800&q=80"
+                    alt="Robot Dog" class="robot-image">
+                <div class="image-overlay"></div>
+            </div>
+
+            <div class="content">
+                <h3>K-9 Unit: Prototipo Alpha</h3>
+                <p>
+                    Il nostro ultimo progetto nel campo della robotica autonoma.
+                    Questo quadrupede robotico è progettato per assistere in operazioni di ricerca e salvataggio in
+                    ambienti ostili.
+                </p>
+                <p>
+                    Dotato di sensori LIDAR avanzati e intelligenza artificiale adattiva,
+                    è in grado di navigare terreni accidentati e interagire con l'ambiente in tempo reale.
+                </p>
+            </div>
+        </div>
+
+        <div class="modal-footer">
+            <button class="btn-action" (click)="onClose()">Vedi Specifiche</button>
+        </div>
+    </div>
+</div>
