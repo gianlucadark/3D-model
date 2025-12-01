@@ -24,6 +24,14 @@ export class ComputerComponent implements OnInit, AfterViewInit {
   private raycaster!: THREE.Raycaster;
   private mouse!: THREE.Vector2;
 
+  // Cache per oggetti animati (ottimizzazione performance)
+  private cachedLampObjects: Array<{ mesh: THREE.Mesh, spotLight: THREE.SpotLight, glowMesh?: THREE.Mesh, helper?: any }> = [];
+
+  // Throttling per raycasting
+  private lastMouseMoveTime = 0;
+  private mouseMoveThrottleMs = 16; // ~60fps
+  private pendingMouseMove: MouseEvent | null = null;
+
   // Flag di stato
   private isAnimationActive = false;
   private isZoomedIn = false;
@@ -106,7 +114,8 @@ export class ComputerComponent implements OnInit, AfterViewInit {
     });
 
     this.renderer.setSize(canvas.clientWidth, canvas.clientHeight);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // Pixel ratio ottimizzato per bilanciare qualità e performance
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -116,11 +125,24 @@ export class ComputerComponent implements OnInit, AfterViewInit {
     this.raycaster = new THREE.Raycaster();
     this.mouse = new THREE.Vector2();
 
-    // Configurazione OrbitControls
+    // Configurazione OrbitControls con damping per movimento fluido
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableZoom = this.zoomEnabled;
     this.controls.enableRotate = true;
     this.controls.enablePan = true;
+
+    // Damping per movimento fluido e naturale
+    this.controls.enableDamping = false;
+    this.controls.dampingFactor = 0.05; // Smorzamento ottimale
+    this.controls.rotateSpeed = 0.6; // Velocità bilanciata
+    this.controls.panSpeed = 0.6;
+    this.controls.zoomSpeed = 0.8;
+
+    // Limiti per evitare movimenti estremi
+    this.controls.minDistance = 2;
+    this.controls.maxDistance = 10;
+    this.controls.maxPolarAngle = Math.PI * 0.9;
+
     this.controls.target.set(0, 0, 0);
     this.controls.update();
 
@@ -304,6 +326,14 @@ export class ComputerComponent implements OnInit, AfterViewInit {
         child.userData._lampSpotLight = spotLight;
         child.userData._lampGlowMesh = glowMesh;
         child.userData._lampHelper = helper;
+
+        // Aggiungi alla cache per ottimizzazione rendering
+        this.cachedLampObjects.push({
+          mesh: child,
+          spotLight: spotLight,
+          glowMesh: glowMesh,
+          helper: helper
+        });
 
         glowMaterial.opacity = 0.0;
       }
@@ -740,13 +770,13 @@ export class ComputerComponent implements OnInit, AfterViewInit {
               const spot: THREE.SpotLight = child.userData?._lampSpotLight;
               const glowMesh: THREE.Mesh = child.userData?._lampGlowMesh;
               if (spot) gsap.to(spot, { intensity: 40, duration: 0.9, ease: 'power2.out' });
-              if (child.material) gsap.to(child.material, { emissiveIntensity: 2.5, duration: 0.9, ease: 'power2.out' });
+              if (child.material) child.material.emissiveIntensity = 2.5;
               if (glowMesh && glowMesh.material) gsap.to(glowMesh.material, { opacity: 0.9, duration: 0.9, ease: 'power2.out' });
             } catch (e) { /* ignore */ }
           }
 
           if (child.isMesh && (child.material?.name === 'schermoPiccolo' || child.material?.name === 'schermoGrande' || child.userData?.isScreen)) {
-            gsap.to(child.material, { emissiveIntensity: 5.0, duration: 0.6 });
+            if (child.material) child.material.emissiveIntensity = 5.0;
           }
         });
         try { if (this.renderer) this.renderer.toneMappingExposure = 0.5; } catch (e) { }
@@ -801,15 +831,16 @@ export class ComputerComponent implements OnInit, AfterViewInit {
           }
 
           if (child.isMesh && (child.material?.name === 'schermoPiccolo' || child.material?.name === 'schermoGrande' || child.userData?.isScreen)) {
-            gsap.to(child.material, { emissiveIntensity: 2.0, duration: 0.6 });
+            if (child.material) child.material.emissiveIntensity = 2.0;
           }
 
           if (child.isMesh && child.material?.name === 'tastoMice') {
-            gsap.to(child.material, {
-              emissiveIntensity: 0.5, duration: 0.9, ease: 'power2.out', onComplete: () => {
-                gsap.to(child.material, { emissiveIntensity: 1.2, duration: 1.5, repeat: -1, yoyo: true, ease: 'sine.inOut' });
-              }
-            });
+            if (child.material) {
+              child.material.emissiveIntensity = 0.5;
+              setTimeout(() => {
+                if (child.material) child.material.emissiveIntensity = 1.2;
+              }, 900);
+            }
           }
         });
       }
@@ -999,34 +1030,22 @@ export class ComputerComponent implements OnInit, AfterViewInit {
   private animate(): void {
     requestAnimationFrame(() => this.animate());
 
-    if (this.model) {
-      this.model.traverse((child: any) => {
-        if (child.isMesh && child.userData?.isElica) {
-          child.rotation.y += child.userData.rotationSpeed * 0.016;
-        }
-      });
-    }
-
-    if (this.controls && this.controls.enabled) {
+    // Aggiorna i controlli (necessario per il damping)
+    if (this.controls) {
       this.controls.update();
     }
 
-    // Aggiorna posizioni spotlight
-    if (this.model) {
-      this.model.traverse((child: any) => {
-        if (child.isMesh && child.userData && child.userData._lampSpotLight) {
-          try {
-            const spot: THREE.SpotLight = child.userData._lampSpotLight;
-            const glowMesh: THREE.Mesh = child.userData._lampGlowMesh;
-            const helper: any = child.userData._lampHelper;
-            const anchorPos = new THREE.Vector3();
-            child.getWorldPosition(anchorPos);
-            spot.position.copy(anchorPos);
-            if (glowMesh) glowMesh.position.copy(anchorPos);
-            if (helper && typeof helper.update === 'function') helper.update();
-          } catch (e) { }
+    // Aggiorna posizioni spotlight usando la cache (ottimizzato - no scene traversal)
+    for (const lampObj of this.cachedLampObjects) {
+      try {
+        const anchorPos = new THREE.Vector3();
+        lampObj.mesh.getWorldPosition(anchorPos);
+        lampObj.spotLight.position.copy(anchorPos);
+        if (lampObj.glowMesh) lampObj.glowMesh.position.copy(anchorPos);
+        if (lampObj.helper && typeof lampObj.helper.update === 'function') {
+          lampObj.helper.update();
         }
-      });
+      } catch (e) { }
     }
 
     this.renderer.render(this.scene, this.camera);
@@ -1053,6 +1072,16 @@ export class ComputerComponent implements OnInit, AfterViewInit {
   }
 
   onMouseMove(event: MouseEvent) {
+    // Throttling per ottimizzare performance del raycasting
+    const now = performance.now();
+    if (now - this.lastMouseMoveTime < this.mouseMoveThrottleMs) {
+      this.pendingMouseMove = event;
+      return;
+    }
+
+    this.lastMouseMoveTime = now;
+    this.pendingMouseMove = null;
+
     const hit = this.raycastHit(event);
 
     if (hit && (hit.type === 'screen' || hit.type === 'tasto')) {
@@ -1091,16 +1120,9 @@ export class ComputerComponent implements OnInit, AfterViewInit {
     if (this.isButtonVisible) return;
 
     this.isButtonVisible = true;
-    gsap.to(el, { opacity: 1, scale: 1, duration: 0.4, ease: 'back.out(1.7)' });
-    gsap.to(el, {
-      keyframes: [
-        { scale: 1.03, boxShadow: '0 0 20px rgba(0,255,255,0.8)', duration: 1 },
-        { scale: 1.0, boxShadow: '0 0 10px rgba(0,255,255,0.5)', duration: 1 }
-      ],
-      repeat: -1,
-      yoyo: true,
-      ease: 'sine.inOut'
-    });
+    // Applicazione istantanea degli stili senza animazioni
+    el.style.opacity = '1';
+    el.style.transform = 'scale(1)';
   }
 
   hideButton() {
@@ -1108,8 +1130,9 @@ export class ComputerComponent implements OnInit, AfterViewInit {
 
     this.isButtonVisible = false;
     const el = this.hoverButton.nativeElement;
-    gsap.killTweensOf(el);
-    gsap.to(el, { opacity: 0, scale: 0.8, duration: 0.2, ease: 'power2.inOut' });
+    // Applicazione istantanea degli stili
+    el.style.opacity = '0';
+    el.style.transform = 'scale(0.8)';
   }
 
   private raycastHit(event: MouseEvent): { type: string, object: any } | null {
