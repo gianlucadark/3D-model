@@ -48,6 +48,7 @@ export class ComputerComponent implements OnInit, AfterViewInit {
   // Riferimenti a specifici oggetti mesh
   private screenGrandeMesh: THREE.Mesh | null = null;
   private tastoMiceMeshes: THREE.Mesh[] = [];
+  private interactiveObjects: THREE.Object3D[] = [];
 
   // Riferimenti all'illuminazione
   private ambientLight!: THREE.AmbientLight;
@@ -176,8 +177,8 @@ export class ComputerComponent implements OnInit, AfterViewInit {
     fill.position.set(0, 3.5, 2);
     fill.castShadow = true;
     if (fill.shadow) {
-      fill.shadow.mapSize.width = 1024;
-      fill.shadow.mapSize.height = 1024;
+      fill.shadow.mapSize.width = 512;
+      fill.shadow.mapSize.height = 512;
       fill.shadow.radius = 4;
       fill.shadow.bias = -0.0005;
     }
@@ -211,8 +212,8 @@ export class ComputerComponent implements OnInit, AfterViewInit {
         cam.far = 50;
       }
       if (dir.shadow) {
-        dir.shadow.mapSize.width = 2048;
-        dir.shadow.mapSize.height = 2048;
+        dir.shadow.mapSize.width = 1024;
+        dir.shadow.mapSize.height = 1024;
         dir.shadow.bias = -0.0006;
       }
       this.scene.add(dir);
@@ -358,10 +359,12 @@ export class ComputerComponent implements OnInit, AfterViewInit {
         try { this.addLightToLampadina(); } catch (e) { console.warn('Errore addLightToLampadina:', e); }
 
         this.tastoMiceMeshes = [];
+        this.interactiveObjects = []; // Reset interactive objects
         this.model.traverse((child: any) => {
           if (child.isMesh && child.material?.name === 'tastoMice') {
             this.tastoMiceMeshes.push(child as THREE.Mesh);
             child.userData.isTastoMice = true;
+            this.interactiveObjects.push(child);
           }
         });
 
@@ -547,8 +550,10 @@ export class ComputerComponent implements OnInit, AfterViewInit {
     if (this.controls) this.controls.enabled = false;
 
     const tl = gsap.timeline({
+      onStart: () => { this.isAnimationActive = true; },
       onComplete: () => {
         if (this.controls) this.controls.enabled = true;
+        this.isAnimationActive = false;
       }
     });
 
@@ -688,12 +693,14 @@ export class ComputerComponent implements OnInit, AfterViewInit {
           child.userData.isScreen = true;
           child.userData.materialName = 'schermoPiccolo';
           child.material = videoMaterial;
+          this.interactiveObjects.push(child);
         }
 
         if (child.material?.name === 'schermoGrande') {
           child.userData.isScreen = true;
           child.userData.materialName = 'schermoGrande';
           this.screenGrandeMesh = child;
+          this.interactiveObjects.push(child);
 
           try {
             const textureLoader = new THREE.TextureLoader();
@@ -1036,16 +1043,21 @@ export class ComputerComponent implements OnInit, AfterViewInit {
     }
 
     // Aggiorna posizioni spotlight usando la cache (ottimizzato - no scene traversal)
-    for (const lampObj of this.cachedLampObjects) {
-      try {
-        const anchorPos = new THREE.Vector3();
-        lampObj.mesh.getWorldPosition(anchorPos);
-        lampObj.spotLight.position.copy(anchorPos);
-        if (lampObj.glowMesh) lampObj.glowMesh.position.copy(anchorPos);
-        if (lampObj.helper && typeof lampObj.helper.update === 'function') {
-          lampObj.helper.update();
-        }
-      } catch (e) { }
+    // Aggiorna posizioni spotlight usando la cache (ottimizzato)
+    // Esegui l'aggiornamento solo se l'animazione è attiva o se siamo nei primi secondi (assembly)
+    // O se il renderer info mostra che ci sono aggiornamenti di matrice (opzionale, qui semplifichiamo)
+    if (this.isAnimationActive || performance.now() < 5000) {
+      for (const lampObj of this.cachedLampObjects) {
+        try {
+          const anchorPos = new THREE.Vector3();
+          lampObj.mesh.getWorldPosition(anchorPos);
+          lampObj.spotLight.position.copy(anchorPos);
+          if (lampObj.glowMesh) lampObj.glowMesh.position.copy(anchorPos);
+          if (lampObj.helper && typeof lampObj.helper.update === 'function') {
+            lampObj.helper.update();
+          }
+        } catch (e) { }
+      }
     }
 
     this.renderer.render(this.scene, this.camera);
@@ -1143,44 +1155,23 @@ export class ComputerComponent implements OnInit, AfterViewInit {
       -((event.clientY - rect.top) / rect.height) * 2 + 1
     );
 
-    const findTastoInAncestors = (obj: any) => {
-      let cur = obj;
-      while (cur) {
-        if (cur.material && cur.material.name === 'tastoMice') return cur;
-        cur = cur.parent;
-      }
-      return null;
-    };
+    this.raycaster.setFromCamera(mouse, this.camera);
 
-    const tryRaycastAt = (ndcX: number, ndcY: number) => {
-      this.raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), this.camera);
-      const ints = this.raycaster.intersectObjects(this.scene.children, true);
-      if (ints && ints.length) {
-        for (const it of ints) {
-          const obj = it.object as any;
-          if (obj.userData?.isScreen && obj.userData?.materialName === 'schermoGrande') return { type: 'screen', object: obj };
-          if (obj.userData?.materialName === 'schermoPiccolo' || obj.material?.name === 'schermoPiccolo') return { type: 'screen', object: obj };
-          const t = findTastoInAncestors(obj);
-          if (t) return { type: 'tasto', object: t };
-        }
-      }
-      return null;
-    };
+    // Ottimizzazione: Raycasting solo sugli oggetti interattivi
+    const intersects = this.raycaster.intersectObjects(this.interactiveObjects, false);
 
-    let hit = tryRaycastAt(mouse.x, mouse.y);
-    if (!hit) {
-      const pixelOffsets = [
-        { dx: -4, dy: 0 }, { dx: 4, dy: 0 }, { dx: 0, dy: -4 }, { dx: 0, dy: 4 },
-        { dx: -4, dy: -4 }, { dx: 4, dy: -4 }, { dx: -4, dy: 4 }, { dx: 4, dy: 4 }
-      ];
-      for (const off of pixelOffsets) {
-        const ndcX = ((event.clientX - rect.left + off.dx) / rect.width) * 2 - 1;
-        const ndcY = -((event.clientY - rect.top + off.dy) / rect.height) * 2 + 1;
-        hit = tryRaycastAt(ndcX, ndcY);
-        if (hit) break;
-      }
+    if (intersects.length > 0) {
+      // Prendi il primo oggetto colpito
+      const obj = intersects[0].object as any;
+
+      // Logica di identificazione tipo
+      if (obj.userData?.isScreen && obj.userData?.materialName === 'schermoGrande') return { type: 'screen', object: obj };
+      if (obj.userData?.materialName === 'schermoPiccolo' || obj.material?.name === 'schermoPiccolo') return { type: 'screen', object: obj };
+
+      // Per i tasti mouse, verifica se è un tasto o un figlio di un tasto (anche se con interactiveObjects dovrebbe essere diretto)
+      if (obj.userData?.isTastoMice) return { type: 'tasto', object: obj };
     }
 
-    return hit;
+    return null;
   }
 }
