@@ -336,9 +336,18 @@ export class ComputerComponent implements OnInit, AfterViewInit {
         });
 
         const video = this.createVideoElement();
-        const screenMaterial = this.createScreenMaterial(video);
-        this.replaceScreenMaterials(screenMaterial);
         this.startVideo(video);
+
+        const applyVideoMaterial = () => {
+          const screenMaterial = this.createScreenMaterial(video);
+          this.replaceScreenMaterials(screenMaterial);
+        };
+
+        if (video.readyState >= 2) {
+          applyVideoMaterial();
+        } else {
+          video.addEventListener('loadeddata', applyVideoMaterial, { once: true });
+        }
 
         setTimeout(() => {
           this.threeCanvas.nativeElement.style.pointerEvents = 'auto';
@@ -608,7 +617,6 @@ export class ComputerComponent implements OnInit, AfterViewInit {
     const zoomFactor = 1.3;
     videoTexture.repeat.set(1, 1 / zoomFactor);
     videoTexture.offset.set(0, (1 - 1 / zoomFactor) / 2);
-    videoTexture.needsUpdate = true;
 
     const mat = new THREE.MeshStandardMaterial({
       map: videoTexture,
