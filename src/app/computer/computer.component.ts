@@ -1,4 +1,4 @@
-import { Component, ElementRef, OnInit, ViewChild, AfterViewInit, OnDestroy, NgZone, ChangeDetectionStrategy } from '@angular/core';
+import { Component, ElementRef, OnInit, ViewChild, AfterViewInit, OnDestroy, NgZone, ChangeDetectionStrategy, ChangeDetectorRef } from '@angular/core';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
@@ -68,7 +68,7 @@ export class ComputerComponent implements OnInit, AfterViewInit, OnDestroy {
   private boundOnCanvasClick: (event: MouseEvent) => void;
   private boundOnWindowResize: () => void;
 
-  constructor(private ngZone: NgZone) {
+  constructor(private ngZone: NgZone, private cdr: ChangeDetectorRef) {
     gsap.registerPlugin(ScrollTrigger);
     this.boundOnMouseMove = this.onMouseMove.bind(this);
     this.boundOnCanvasClick = this.onCanvasClick.bind(this);
@@ -789,6 +789,7 @@ export class ComputerComponent implements OnInit, AfterViewInit, OnDestroy {
    */
   public toggleDarkMode(): void {
     this.isDarkMode = !this.isDarkMode;
+    this.cdr.markForCheck();
 
     const lampSpots = new Set<THREE.Light>();
     if (this.model) {
@@ -1035,33 +1036,39 @@ export class ComputerComponent implements OnInit, AfterViewInit, OnDestroy {
     this.isTastoMiceModalVisible = true;
     try { document.body.style.overflow = 'hidden'; } catch (e) { }
     this.hideButton();
+    this.cdr.markForCheck();
   }
 
   public closeTastoMiceModal(): void {
     this.isTastoMiceModalVisible = false;
     try { document.body.style.overflow = ''; } catch (e) { }
+    this.cdr.markForCheck();
   }
 
   public openResearchModal(): void {
     this.isResearchModalVisible = true;
     try { document.body.style.overflow = 'hidden'; } catch (e) { }
     this.hideButton();
+    this.cdr.markForCheck();
   }
 
   public closeResearchModal(): void {
     this.isResearchModalVisible = false;
     try { document.body.style.overflow = ''; } catch (e) { }
+    this.cdr.markForCheck();
   }
 
   public openRobotDogModal(): void {
     this.isRobotDogModalVisible = true;
     try { document.body.style.overflow = 'hidden'; } catch (e) { }
     this.hideButton();
+    this.cdr.markForCheck();
   }
 
   public closeRobotDogModal(): void {
     this.isRobotDogModalVisible = false;
     try { document.body.style.overflow = ''; } catch (e) { }
+    this.cdr.markForCheck();
   }
 
 
@@ -1112,6 +1119,7 @@ export class ComputerComponent implements OnInit, AfterViewInit, OnDestroy {
   public toggleZoom() {
     this.zoomEnabled = !this.zoomEnabled;
     if (this.controls) this.controls.enableZoom = this.zoomEnabled;
+    this.cdr.markForCheck();
   }
 
   onMouseMove(event: MouseEvent) {
