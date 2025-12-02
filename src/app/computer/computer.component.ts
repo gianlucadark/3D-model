@@ -1,4 +1,4 @@
-import { Component, ElementRef, OnInit, ViewChild, AfterViewInit, OnDestroy, NgZone } from '@angular/core';
+import { Component, ElementRef, OnInit, ViewChild, AfterViewInit, OnDestroy, NgZone, ChangeDetectionStrategy } from '@angular/core';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
@@ -9,7 +9,8 @@ import { ScrollTrigger } from 'gsap/ScrollTrigger';
 @Component({
   selector: 'app-computer',
   templateUrl: './computer.component.html',
-  styleUrls: ['./computer.component.scss']
+  styleUrls: ['./computer.component.scss'],
+  changeDetection: ChangeDetectionStrategy.OnPush
 })
 export class ComputerComponent implements OnInit, AfterViewInit, OnDestroy {
   @ViewChild('threeCanvas', { static: true }) threeCanvas!: ElementRef<HTMLCanvasElement>;
@@ -1120,6 +1121,9 @@ export class ComputerComponent implements OnInit, AfterViewInit, OnDestroy {
       this.pendingMouseMove = event;
       return;
     }
+
+    // Ottimizzazione: Evita raycasting se l'utente sta trascinando (ruotando la camera)
+    if (event.buttons > 0) return;
 
     this.lastMouseMoveTime = now;
     this.pendingMouseMove = null;
