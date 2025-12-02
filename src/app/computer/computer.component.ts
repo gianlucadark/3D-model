@@ -4,7 +4,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader';
 import { gsap } from 'gsap';
-import { ScrollTrigger } from 'gsap/ScrollTrigger';
+
 
 @Component({
   selector: 'app-computer',
@@ -28,13 +28,16 @@ export class ComputerComponent implements OnInit, AfterViewInit, OnDestroy {
   // Cache per oggetti animati (ottimizzazione performance)
   private cachedLampObjects: Array<{ mesh: THREE.Mesh, spotLight: THREE.SpotLight, glowMesh?: THREE.Mesh, helper?: any }> = [];
 
+  // Array per tracciare tutte le animazioni GSAP create da questo componente
+  private gsapAnimations: (gsap.core.Tween | gsap.core.Timeline)[] = [];
+
   // Throttling per raycasting
   private lastMouseMoveTime = 0;
   private mouseMoveThrottleMs = 16; // ~60fps
   private pendingMouseMove: MouseEvent | null = null;
 
   // Flag di stato
-  private isAnimationActive = false;
+
   private isZoomedIn = false;
   public zoomEnabled = false;
   public isDarkMode = false;
@@ -69,7 +72,7 @@ export class ComputerComponent implements OnInit, AfterViewInit, OnDestroy {
   private boundOnWindowResize: () => void;
 
   constructor(private ngZone: NgZone, private cdr: ChangeDetectorRef) {
-    gsap.registerPlugin(ScrollTrigger);
+
     this.boundOnMouseMove = this.onMouseMove.bind(this);
     this.boundOnCanvasClick = this.onCanvasClick.bind(this);
     this.boundOnWindowResize = this.onWindowResize.bind(this);
@@ -128,8 +131,13 @@ export class ComputerComponent implements OnInit, AfterViewInit, OnDestroy {
 
     if (this.controls) this.controls.dispose();
 
-    // Kill GSAP tweens
-    gsap.globalTimeline.clear();
+    // Kill solo le animazioni GSAP create da questo componentei!
+    this.gsapAnimations.forEach(anim => {
+      if (anim && anim.kill) {
+        anim.kill();
+      }
+    });
+    this.gsapAnimations = [];
   }
 
   // Rimosso @HostListener per evitare trigger Angular. Gestito manualmente in runOutsideAngular.
@@ -216,8 +224,8 @@ export class ComputerComponent implements OnInit, AfterViewInit, OnDestroy {
    * Configura l'illuminazione della scena incluse luci ambientali, emisferiche e direzionali.
    */
   private setupAdvancedLighting(): void {
-    // Luce Ambientale
-    this.ambientLight = new THREE.AmbientLight(0xffffff, 0.15);
+    // Luce Ambientale (valore iniziale uguale a light mode)
+    this.ambientLight = new THREE.AmbientLight(0xffffff, 0.25);
     this.scene.add(this.ambientLight);
 
     // Luce Emisferica
@@ -242,9 +250,9 @@ export class ComputerComponent implements OnInit, AfterViewInit, OnDestroy {
       // RectAreaLight potrebbe non essere disponibile in tutti gli ambienti
     }
 
-    // Luce Direzionale Principale (Simile al sole)
+    // Luce Direzionale Principale (Simile al sole, valore iniziale uguale a light mode)
     try {
-      const dir = new THREE.DirectionalLight(0xffffff, 0.5);
+      const dir = new THREE.DirectionalLight(0xffffff, 1.0);
       dir.position.set(5, 10, 7);
       dir.target.position.set(0, 0, 0);
       dir.castShadow = true;
@@ -430,7 +438,7 @@ export class ComputerComponent implements OnInit, AfterViewInit, OnDestroy {
         }, 500);
 
         console.log('Modello pronto per animazione');
-        this.animateAssembly();
+        this.setupInitialState();
         this.animateSmoke();
         this.animateMouse();
         this.addMaterialToTazza();
@@ -595,97 +603,21 @@ export class ComputerComponent implements OnInit, AfterViewInit, OnDestroy {
     });
   }
 
+
   /**
-   * Anima l'assemblaggio del modello computer.
+   * Configura lo stato iniziale del modello (salva posizioni/scale originali per interazioni)
+   * senza eseguire animazioni di entrata.
    */
-  private animateAssembly(): void {
+  private setupInitialState(): void {
     if (!this.model) return;
-
-    if (this.controls) this.controls.enabled = false;
-
-    const tl = gsap.timeline({
-      onStart: () => { this.isAnimationActive = true; },
-      onComplete: () => {
-        if (this.controls) this.controls.enabled = true;
-        this.isAnimationActive = false;
-      }
-    });
-
-    const transparentMaterials = ['fumo', 'tazza', 'caffe'];
-    const tableMeshes: THREE.Object3D[] = [];
-    const otherMeshes: THREE.Object3D[] = [];
-    let tazzaMesh: any = null;
-    let caffeMesh: any = null;
 
     this.model.traverse((child: any) => {
       if (child.isMesh) {
         child.userData.originalPos = child.position.clone();
         child.userData.originalScale = child.scale.clone();
         child.userData.originalRot = child.rotation.clone();
-
-        const matName = (child.material?.name || '').toLowerCase();
-
-        if (matName.includes('tazza')) tazzaMesh = child;
-        if (matName === 'caffe') caffeMesh = child;
-
-        if (matName === 'tavolo') {
-          tableMeshes.push(child);
-          child.position.y -= 5;
-          child.scale.set(0, 0, 0);
-        } else {
-          otherMeshes.push(child);
-          child.scale.set(0, 0, 0);
-
-          if (child.material && transparentMaterials.includes(child.material.name)) {
-            child.material.transparent = true;
-            child.material.opacity = 0;
-            child.userData.hasTransparency = true;
-          }
-        }
       }
     });
-
-    // 1. Animazione Tavolo
-    tableMeshes.forEach((mesh: any) => {
-      tl.to(mesh.position, { y: mesh.userData.originalPos.y, duration: 1.2, ease: 'back.out(1.2)' }, 0);
-      tl.to(mesh.scale, { x: mesh.userData.originalScale.x, y: mesh.userData.originalScale.y, z: mesh.userData.originalScale.z, duration: 1.2, ease: 'back.out(1.2)' }, 0);
-      mesh.rotation.x -= 0.5;
-      tl.to(mesh.rotation, { x: mesh.userData.originalRot.x, duration: 1.2, ease: 'back.out(1.5)' }, 0);
-    });
-
-    // 2. Pop-in Altri Oggetti
-    const popStartTime = 1.2;
-    otherMeshes.forEach((mesh: any) => {
-      if (mesh === caffeMesh) return;
-
-      const delay = popStartTime;
-      tl.to(mesh.scale, { x: mesh.userData.originalScale.x, y: mesh.userData.originalScale.y, z: mesh.userData.originalScale.z, duration: 0.5, ease: 'back.out(1.7)' }, delay);
-
-      if (mesh.userData.hasTransparency) {
-        tl.to(mesh.material, { opacity: 1, duration: 0.3, ease: 'sine.out' }, delay);
-      }
-
-      if (mesh === tazzaMesh) {
-        tl.to(mesh.rotation, { z: mesh.userData.originalRot.z + 0.1, duration: 0.2, yoyo: true, repeat: 1, ease: 'sine.inOut' }, delay + 0.3);
-      }
-    });
-
-    // 3. Animazione Caffè
-    if (caffeMesh && tazzaMesh) {
-      const caffeDelay = popStartTime;
-      tl.to(caffeMesh.scale, { x: caffeMesh.userData.originalScale.x, y: caffeMesh.userData.originalScale.y, z: caffeMesh.userData.originalScale.z, duration: 0.4, ease: 'back.out(1.5)' }, caffeDelay);
-      tl.to(caffeMesh.material, { opacity: 1, duration: 0.3 }, caffeDelay);
-    }
-
-    // 4. Aggiustamento Finale
-    const allObjects = [...tableMeshes, ...otherMeshes];
-    tl.to(allObjects.map(m => m.position), { y: '+=0.05', duration: 0.2, ease: 'sine.inOut', yoyo: true, repeat: 1 }, '+=0.1');
-
-    if (tazzaMesh && caffeMesh) {
-      const finalTazzaDelay = popStartTime + 0.4;
-      tl.to(tazzaMesh.rotation, { z: tazzaMesh.userData.originalRot.z + 0.08, duration: 0.15, ease: 'sine.out' }, finalTazzaDelay);
-      tl.to(tazzaMesh.rotation, { z: tazzaMesh.userData.originalRot.z, duration: 0.3, ease: 'power1.out' }, finalTazzaDelay + 0.15);
-    }
   }
 
   private createScreenMaterial(video: HTMLVideoElement): THREE.MeshStandardMaterial {
@@ -726,8 +658,13 @@ export class ComputerComponent implements OnInit, AfterViewInit, OnDestroy {
         child.material.opacity = 0.5;
         child.material.depthWrite = false;
 
-        gsap.to(child.position, { y: '+=1.5', duration: 0.5, repeat: -1, yoyo: true, ease: 'sine.inOut' });
-        gsap.to(child.rotation, { z: '+=1.3', duration: 0.5, repeat: -1, yoyo: true, ease: 'sine.inOut' });
+        // Traccia le animazioni per cleanup sicuro
+        this.gsapAnimations.push(
+          gsap.to(child.position, { y: '+=1.5', duration: 0.5, repeat: -1, yoyo: true, ease: 'sine.inOut' })
+        );
+        this.gsapAnimations.push(
+          gsap.to(child.rotation, { z: '+=1.3', duration: 0.5, repeat: -1, yoyo: true, ease: 'sine.inOut' })
+        );
       }
     });
   }
@@ -735,7 +672,10 @@ export class ComputerComponent implements OnInit, AfterViewInit, OnDestroy {
   private animateMouse(): void {
     this.model.traverse((child: any) => {
       if (child.isMesh && (child.material?.name?.toLowerCase().includes('mouse') || child.name?.toLowerCase().includes('mouse'))) {
-        gsap.to(child.position, { x: '+=6.25', duration: 0.5, repeat: -1, yoyo: true, ease: 'sine.inOut' });
+        // Traccia l'animazione per cleanup sicuro
+        this.gsapAnimations.push(
+          gsap.to(child.position, { x: '+=6.25', duration: 0.5, repeat: -1, yoyo: true, ease: 'sine.inOut' })
+        );
       }
     });
   }
@@ -791,17 +731,30 @@ export class ComputerComponent implements OnInit, AfterViewInit, OnDestroy {
     this.isDarkMode = !this.isDarkMode;
     this.cdr.markForCheck();
 
+    // Raccogli tutti gli spotlight delle lampadine
     const lampSpots = new Set<THREE.Light>();
+    const lampData: Array<{ spot: THREE.SpotLight, material: any, glowMesh?: THREE.Mesh }> = [];
+
     if (this.model) {
       this.model.traverse((child: any) => {
         if (child.isMesh && child.material?.name === 'lampadina') {
           try {
             const spot: THREE.SpotLight = child.userData?._lampSpotLight;
-            if (spot) lampSpots.add(spot);
+            const glowMesh: THREE.Mesh = child.userData?._lampGlowMesh;
+            if (spot) {
+              lampSpots.add(spot);
+              lampData.push({ spot, material: child.material, glowMesh });
+            }
           } catch (e) { /* ignore */ }
         }
       });
     }
+
+    lampData.forEach(({ spot, material, glowMesh }) => {
+      gsap.killTweensOf(spot);
+      if (material) gsap.killTweensOf(material);
+      if (glowMesh && glowMesh.material) gsap.killTweensOf(glowMesh.material);
+    });
 
     if (this.isDarkMode) {
       // Modalità Scura
@@ -831,9 +784,18 @@ export class ComputerComponent implements OnInit, AfterViewInit, OnDestroy {
             try {
               const spot: THREE.SpotLight = child.userData?._lampSpotLight;
               const glowMesh: THREE.Mesh = child.userData?._lampGlowMesh;
-              if (spot) gsap.to(spot, { intensity: 40, duration: 0.9, ease: 'power2.out' });
-              if (child.material) child.material.emissiveIntensity = 2.5;
-              if (glowMesh && glowMesh.material) gsap.to(glowMesh.material, { opacity: 0.9, duration: 0.9, ease: 'power2.out' });
+              if (spot) {
+                gsap.killTweensOf(spot);
+                gsap.to(spot, { intensity: 40, duration: 0.9, ease: 'power2.out' });
+              }
+              if (child.material) {
+                gsap.killTweensOf(child.material);
+                child.material.emissiveIntensity = 2.5;
+              }
+              if (glowMesh && glowMesh.material) {
+                gsap.killTweensOf(glowMesh.material);
+                gsap.to(glowMesh.material, { opacity: 0.9, duration: 0.9, ease: 'power2.out' });
+              }
             } catch (e) { /* ignore */ }
           }
 
@@ -850,6 +812,7 @@ export class ComputerComponent implements OnInit, AfterViewInit, OnDestroy {
 
       this.scene.traverse((obj: any) => {
         if (obj && obj.isLight) {
+          gsap.killTweensOf(obj);
           try {
             if (obj === this.ambientLight) gsap.to(obj, { intensity: 0.25, duration: 0.6 });
             else if (obj === this.mainLight) gsap.to(obj, { intensity: 1.0, duration: 0.6 });
@@ -886,9 +849,18 @@ export class ComputerComponent implements OnInit, AfterViewInit, OnDestroy {
             try {
               const spot: THREE.SpotLight = child.userData?._lampSpotLight;
               const glowMesh: THREE.Mesh = child.userData?._lampGlowMesh;
-              if (spot) gsap.to(spot, { intensity: 0, duration: 0.6 });
-              if (child.material) gsap.to(child.material, { emissiveIntensity: 0, duration: 0.6 });
-              if (glowMesh && glowMesh.material) gsap.to(glowMesh.material, { opacity: 0, duration: 0.6 });
+              if (spot) {
+                gsap.killTweensOf(spot);
+                gsap.to(spot, { intensity: 0, duration: 0.6 });
+              }
+              if (child.material) {
+                gsap.killTweensOf(child.material);
+                gsap.to(child.material, { emissiveIntensity: 0, duration: 0.6 });
+              }
+              if (glowMesh && glowMesh.material) {
+                gsap.killTweensOf(glowMesh.material);
+                gsap.to(glowMesh.material, { opacity: 0, duration: 0.6 });
+              }
             } catch (e) { /* ignore */ }
           }
 
@@ -1083,20 +1055,7 @@ export class ComputerComponent implements OnInit, AfterViewInit, OnDestroy {
       this.controls.update();
     }
 
-    // Aggiorna posizioni spotlight usando la cache (ottimizzato)
-    if (this.isAnimationActive || performance.now() < 5000) {
-      for (const lampObj of this.cachedLampObjects) {
-        try {
-          const anchorPos = new THREE.Vector3();
-          lampObj.mesh.getWorldPosition(anchorPos);
-          lampObj.spotLight.position.copy(anchorPos);
-          if (lampObj.glowMesh) lampObj.glowMesh.position.copy(anchorPos);
-          if (lampObj.helper && typeof lampObj.helper.update === 'function') {
-            lampObj.helper.update();
-          }
-        } catch (e) { }
-      }
-    }
+
 
     this.renderer.render(this.scene, this.camera);
   }
@@ -1110,11 +1069,7 @@ export class ComputerComponent implements OnInit, AfterViewInit, OnDestroy {
     this.renderer.setSize(canvas.clientWidth, canvas.clientHeight);
   }
 
-  public forceScroll(): void {
-    if (this.isAnimationActive) {
-      window.scrollBy(0, window.innerHeight * 0.8);
-    }
-  }
+
 
   public toggleZoom() {
     this.zoomEnabled = !this.zoomEnabled;
