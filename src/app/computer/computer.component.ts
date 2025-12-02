@@ -1,4 +1,4 @@
-import { Component, ElementRef, OnInit, ViewChild, AfterViewInit, HostListener } from '@angular/core';
+import { Component, ElementRef, OnInit, ViewChild, AfterViewInit, OnDestroy, NgZone } from '@angular/core';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
@@ -11,7 +11,7 @@ import { ScrollTrigger } from 'gsap/ScrollTrigger';
   templateUrl: './computer.component.html',
   styleUrls: ['./computer.component.scss']
 })
-export class ComputerComponent implements OnInit, AfterViewInit {
+export class ComputerComponent implements OnInit, AfterViewInit, OnDestroy {
   @ViewChild('threeCanvas', { static: true }) threeCanvas!: ElementRef<HTMLCanvasElement>;
   @ViewChild('hoverButton') hoverButton!: ElementRef<HTMLDivElement>;
 
@@ -40,6 +40,7 @@ export class ComputerComponent implements OnInit, AfterViewInit {
   public isTastoMiceModalVisible = false;
   public isResearchModalVisible = false;
   public isRobotDogModalVisible = false;
+  private isDestroyed = false;
 
   // Stato della camera per la funzionalità di zoom
   private originalCameraPosition = new THREE.Vector3();
@@ -61,25 +62,76 @@ export class ComputerComponent implements OnInit, AfterViewInit {
   private originalEnvMap: THREE.Texture | null = null;
   private isButtonVisible = false;
 
-  constructor() {
+  // Event listeners bound functions (per rimozione corretta)
+  private boundOnMouseMove: (event: MouseEvent) => void;
+  private boundOnCanvasClick: (event: MouseEvent) => void;
+  private boundOnWindowResize: () => void;
+
+  constructor(private ngZone: NgZone) {
     gsap.registerPlugin(ScrollTrigger);
+    this.boundOnMouseMove = this.onMouseMove.bind(this);
+    this.boundOnCanvasClick = this.onCanvasClick.bind(this);
+    this.boundOnWindowResize = this.onWindowResize.bind(this);
   }
 
   ngOnInit() {
     this.initScene();
     this.loadModel();
-    this.animate();
+    // Nota: animate() viene chiamato in ngAfterViewInit fuori da Angular
   }
 
   ngAfterViewInit() {
-    // Ritarda la configurazione dell'animazione scroll per assicurare che il DOM sia pronto
-    setTimeout(() => {
-      // this.setupScrollAnimation();
-      this.threeCanvas.nativeElement.addEventListener('mousemove', this.onMouseMove.bind(this));
-    }, 1000);
+    // Eseguiamo setup eventi e loop di rendering fuori dalla zona Angular
+    // per evitare change detection ad ogni frame o evento mouse
+    this.ngZone.runOutsideAngular(() => {
+      const canvas = this.threeCanvas.nativeElement;
+
+      canvas.addEventListener('mousemove', this.boundOnMouseMove);
+      canvas.addEventListener('click', this.boundOnCanvasClick);
+      window.addEventListener('resize', this.boundOnWindowResize);
+
+      // Avvia il loop di rendering
+      this.animate();
+    });
   }
 
-  @HostListener('click', ['$event'])
+  ngOnDestroy() {
+    this.isDestroyed = true;
+
+    // Rimuovi listeners
+    const canvas = this.threeCanvas.nativeElement;
+    if (canvas) {
+      canvas.removeEventListener('mousemove', this.boundOnMouseMove);
+      canvas.removeEventListener('click', this.boundOnCanvasClick);
+    }
+    window.removeEventListener('resize', this.boundOnWindowResize);
+
+    // Cleanup Three.js
+    if (this.renderer) {
+      this.renderer.dispose();
+      this.renderer.forceContextLoss();
+    }
+
+    if (this.scene) {
+      this.scene.traverse((object: any) => {
+        if (object.geometry) object.geometry.dispose();
+        if (object.material) {
+          if (Array.isArray(object.material)) {
+            object.material.forEach((m: any) => m.dispose());
+          } else {
+            object.material.dispose();
+          }
+        }
+      });
+    }
+
+    if (this.controls) this.controls.dispose();
+
+    // Kill GSAP tweens
+    gsap.globalTimeline.clear();
+  }
+
+  // Rimosso @HostListener per evitare trigger Angular. Gestito manualmente in runOutsideAngular.
   onCanvasClick(event: MouseEvent) {
     const canvas = this.threeCanvas.nativeElement;
     const rect = canvas.getBoundingClientRect();
@@ -111,14 +163,16 @@ export class ComputerComponent implements OnInit, AfterViewInit {
     this.renderer = new THREE.WebGLRenderer({
       canvas,
       antialias: true,
-      powerPreference: "high-performance"
+      powerPreference: "high-performance",
+      stencil: false, // Disabilita stencil buffer se non necessario
+      depth: true
     });
 
     this.renderer.setSize(canvas.clientWidth, canvas.clientHeight);
     // Pixel ratio ottimizzato per bilanciare qualità e performance
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap; // Più performante di PCFSoftShadowMap
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 0.8;
     (this.renderer as any).physicallyCorrectLights = true;
@@ -130,11 +184,11 @@ export class ComputerComponent implements OnInit, AfterViewInit {
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableZoom = this.zoomEnabled;
     this.controls.enableRotate = true;
-    this.controls.enablePan = true;
+    this.controls.enablePan = false;
 
     // Damping per movimento fluido e naturale
-    this.controls.enableDamping = false;
-    this.controls.dampingFactor = 0.05; // Smorzamento ottimale
+    this.controls.enableDamping = true; // Importante: deve essere true per il damping
+    this.controls.dampingFactor = 0.15; // Smorzamento ottimale
     this.controls.rotateSpeed = 0.6; // Velocità bilanciata
     this.controls.panSpeed = 0.6;
     this.controls.zoomSpeed = 0.8;
@@ -155,8 +209,6 @@ export class ComputerComponent implements OnInit, AfterViewInit {
 
     // Carica mappa ambiente HDR
     this.loadHDREnvironment();
-
-    window.addEventListener('resize', () => this.onWindowResize());
   }
 
   /**
@@ -176,12 +228,6 @@ export class ComputerComponent implements OnInit, AfterViewInit {
     const fill = new THREE.PointLight(0xffffff, 0.6, 30);
     fill.position.set(0, 3.5, 2);
     fill.castShadow = false; // Disabilitato per performance
-    // if (fill.shadow) {
-    //   fill.shadow.mapSize.width = 512;
-    //   fill.shadow.mapSize.height = 512;
-    //   fill.shadow.radius = 4;
-    //   fill.shadow.bias = -0.0005;
-    // }
     this.scene.add(fill);
     this.fillLight = fill;
 
@@ -212,8 +258,8 @@ export class ComputerComponent implements OnInit, AfterViewInit {
         cam.far = 50;
       }
       if (dir.shadow) {
-        dir.shadow.mapSize.width = 512; // Ridotto da 1024
-        dir.shadow.mapSize.height = 512; // Ridotto da 1024
+        dir.shadow.mapSize.width = 1024; // Qualità ombra
+        dir.shadow.mapSize.height = 1024;
         dir.shadow.bias = -0.0006;
       }
       this.scene.add(dir);
@@ -885,24 +931,35 @@ export class ComputerComponent implements OnInit, AfterViewInit {
 
         if (matName === 'schermoGrande') {
           console.log('Cliccato schermoGrande - Apertura Modale Ricerca');
-          this.openResearchModal();
+          // Rientra in Angular Zone per aggiornare la UI
+          this.ngZone.run(() => {
+            this.openResearchModal();
+          });
           return;
         }
 
         if (matName === 'schermoPiccolo' || hit.object.material?.name === 'schermoPiccolo') {
           console.log('Cliccato schermoPiccolo - Toggle Zoom');
-          if (this.isZoomedIn) {
-            this.zoomOut();
-          } else {
-            this.zoomToScreen(hit.object);
-          }
+          // Toggle zoom e animazioni possono stare fuori, ma se cambiano stato UI, meglio wrappare
+          // Qui zoomToScreen usa GSAP, non tocca UI direttamente se non isZoomedIn (privato)
+          // Ma se zoomEnabled è usato nel template, servirebbe run. 
+          // Per sicurezza wrappiamo le azioni logiche principali.
+          this.ngZone.run(() => {
+            if (this.isZoomedIn) {
+              this.zoomOut();
+            } else {
+              this.zoomToScreen(hit.object);
+            }
+          });
           return;
         }
       }
 
       if (hit.type === 'tasto') {
         console.log('Cliccato tastoMice - Apertura Modale Robot Dog');
-        this.openRobotDogModal();
+        this.ngZone.run(() => {
+          this.openRobotDogModal();
+        });
         return;
       }
     }
@@ -1008,6 +1065,9 @@ export class ComputerComponent implements OnInit, AfterViewInit {
 
 
   private animate(): void {
+    // Loop di rendering puro fuori da Angular Zone
+    if (this.isDestroyed) return;
+
     requestAnimationFrame(() => this.animate());
 
     // Aggiorna i controlli (necessario per il damping)
@@ -1015,10 +1075,7 @@ export class ComputerComponent implements OnInit, AfterViewInit {
       this.controls.update();
     }
 
-    // Aggiorna posizioni spotlight usando la cache (ottimizzato - no scene traversal)
     // Aggiorna posizioni spotlight usando la cache (ottimizzato)
-    // Esegui l'aggiornamento solo se l'animazione è attiva o se siamo nei primi secondi (assembly)
-    // O se il renderer info mostra che ci sono aggiornamenti di matrice (opzionale, qui semplifichiamo)
     if (this.isAnimationActive || performance.now() < 5000) {
       for (const lampObj of this.cachedLampObjects) {
         try {
