@@ -74,7 +74,7 @@ export class ComputerComponent implements OnInit, AfterViewInit {
   ngAfterViewInit() {
     // Ritarda la configurazione dell'animazione scroll per assicurare che il DOM sia pronto
     setTimeout(() => {
-      this.setupScrollAnimation();
+      // this.setupScrollAnimation();
       this.threeCanvas.nativeElement.addEventListener('mousemove', this.onMouseMove.bind(this));
     }, 1000);
   }
@@ -116,9 +116,9 @@ export class ComputerComponent implements OnInit, AfterViewInit {
 
     this.renderer.setSize(canvas.clientWidth, canvas.clientHeight);
     // Pixel ratio ottimizzato per bilanciare qualità e performance
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 0.8;
     (this.renderer as any).physicallyCorrectLights = true;
@@ -175,13 +175,13 @@ export class ComputerComponent implements OnInit, AfterViewInit {
     // Luce di Riempimento (PointLight)
     const fill = new THREE.PointLight(0xffffff, 0.6, 30);
     fill.position.set(0, 3.5, 2);
-    fill.castShadow = true;
-    if (fill.shadow) {
-      fill.shadow.mapSize.width = 512;
-      fill.shadow.mapSize.height = 512;
-      fill.shadow.radius = 4;
-      fill.shadow.bias = -0.0005;
-    }
+    fill.castShadow = false; // Disabilitato per performance
+    // if (fill.shadow) {
+    //   fill.shadow.mapSize.width = 512;
+    //   fill.shadow.mapSize.height = 512;
+    //   fill.shadow.radius = 4;
+    //   fill.shadow.bias = -0.0005;
+    // }
     this.scene.add(fill);
     this.fillLight = fill;
 
@@ -212,8 +212,8 @@ export class ComputerComponent implements OnInit, AfterViewInit {
         cam.far = 50;
       }
       if (dir.shadow) {
-        dir.shadow.mapSize.width = 1024;
-        dir.shadow.mapSize.height = 1024;
+        dir.shadow.mapSize.width = 512; // Ridotto da 1024
+        dir.shadow.mapSize.height = 512; // Ridotto da 1024
         dir.shadow.bias = -0.0006;
       }
       this.scene.add(dir);
@@ -241,28 +241,24 @@ export class ComputerComponent implements OnInit, AfterViewInit {
   private loadHDREnvironment(): void {
     try {
       const hdrLoader = new HDRLoader();
+      const pmremGenerator = new THREE.PMREMGenerator(this.renderer);
+      pmremGenerator.compileEquirectangularShader();
+
       hdrLoader.load(
         'assets/wooden_lounge_4k.hdr',
         (texture: any) => {
           try {
-            texture.mapping = THREE.EquirectangularReflectionMapping;
-            this.scene.environment = texture;
-            this.originalEnvMap = texture;
+            const envMap = pmremGenerator.fromEquirectangular(texture).texture;
 
-            if (this.model) {
-              this.model.traverse((child: any) => {
-                if (child.isMesh && child.material) {
-                  if ('envMap' in child.material) {
-                    child.material.envMap = texture;
-                    if ('envMapIntensity' in child.material) {
-                      child.material.envMapIntensity = 0.5;
-                    }
-                    child.material.needsUpdate = true;
-                  }
-                }
-              });
-            }
-            console.log('Ambiente HDR caricato e applicato.');
+            // Ottimizzazione: Disposing della texture originale pesante (25MB)
+            // e del generatore dopo l'uso
+            texture.dispose();
+            pmremGenerator.dispose();
+
+            this.scene.environment = envMap;
+            this.originalEnvMap = envMap;
+
+            console.log('Ambiente HDR caricato, processato con PMREM e applicato.');
           } catch (e) {
             console.warn("Errore applicazione HDR:", e);
           }
@@ -300,8 +296,8 @@ export class ComputerComponent implements OnInit, AfterViewInit {
         if (spotLight.shadow) {
           spotLight.shadow.bias = -0.0001;
           spotLight.shadow.normalBias = 0.1;
-          spotLight.shadow.mapSize.width = 1024;
-          spotLight.shadow.mapSize.height = 1024;
+          spotLight.shadow.mapSize.width = 512; // Ridotto da 1024
+          spotLight.shadow.mapSize.height = 512; // Ridotto da 1024
         }
 
         spotLight.target.position.set(anchorPos.x - 50, anchorPos.y - 20, anchorPos.z);
@@ -479,50 +475,63 @@ export class ComputerComponent implements OnInit, AfterViewInit {
       const name = origName.toLowerCase();
       const baseMap = child.material.map || null;
 
-      const phys = new THREE.MeshPhysicalMaterial({
+      // proprietà base
+      let props: any = {
         map: baseMap,
         metalness: 0.0,
         roughness: 0.6,
-        clearcoat: 0.0,
-        clearcoatRoughness: 0.0,
-        reflectivity: 0.5,
-        transmission: 0,
         transparent: child.material.transparent || false,
         opacity: child.material.opacity !== undefined ? child.material.opacity : 1,
         side: child.material.side || THREE.FrontSide,
         dithering: true
-      });
+      };
 
-      const oldMat = child.material as any;
-      if (oldMat) {
-        phys.color = oldMat.color?.clone?.() ?? phys.color;
-        phys.emissive = oldMat.emissive?.clone?.() ?? phys.emissive;
-        phys.emissiveIntensity = oldMat.emissiveIntensity ?? phys.emissiveIntensity;
-        phys.map = oldMat.map ?? phys.map;
-        phys.normalMap = oldMat.normalMap ?? phys.normalMap;
-        phys.roughnessMap = oldMat.roughnessMap ?? phys.roughnessMap;
-        phys.metalnessMap = oldMat.metalnessMap ?? phys.metalnessMap;
-        phys.aoMap = oldMat.aoMap ?? phys.aoMap;
-        phys.alphaTest = oldMat.alphaTest ?? phys.alphaTest;
-        phys.vertexColors = oldMat.vertexColors ?? phys.vertexColors;
-      }
-
-      phys.name = origName;
-
+      // applica le regole
       for (const rule of materialRules) {
         const match = Array.isArray(rule.test) ? rule.test.includes(name) : rule.test.test(name);
         if (match) {
-          Object.assign(phys, rule.props);
+          Object.assign(props, rule.props);
           break;
         }
       }
 
+      // determina se è necessario un materiali fisico
+      const needsPhysical = (props.clearcoat && props.clearcoat > 0) ||
+        (props.transmission && props.transmission > 0) ||
+        (props.sheen && props.sheen > 0) ||
+        (props.iridescence && props.iridescence > 0);
+
+      let newMat;
+      if (needsPhysical) {
+        newMat = new THREE.MeshPhysicalMaterial(props);
+      } else {
+        // Rimuove le proprietà fisiche per evitare avvisi/问题
+        const { clearcoat, clearcoatRoughness, transmission, thickness, ior, attenuationColor, attenuationDistance, reflectivity, ...standardProps } = props;
+        newMat = new THREE.MeshStandardMaterial(standardProps);
+      }
+
+      const oldMat = child.material as any;
+      if (oldMat) {
+        if (oldMat.color) newMat.color.copy(oldMat.color);
+        if (oldMat.emissive) newMat.emissive.copy(oldMat.emissive);
+        newMat.emissiveIntensity = oldMat.emissiveIntensity ?? newMat.emissiveIntensity;
+
+        newMat.map = oldMat.map ?? newMat.map;
+        newMat.normalMap = oldMat.normalMap ?? newMat.normalMap;
+        newMat.roughnessMap = oldMat.roughnessMap ?? newMat.roughnessMap;
+        newMat.metalnessMap = oldMat.metalnessMap ?? newMat.metalnessMap;
+        newMat.aoMap = oldMat.aoMap ?? newMat.aoMap;
+        newMat.alphaTest = oldMat.alphaTest ?? newMat.alphaTest;
+        if (oldMat.vertexColors !== undefined) newMat.vertexColors = oldMat.vertexColors;
+      }
+
+      newMat.name = origName;
+
       if (child.material.map) {
-        phys.map = child.material.map;
         const _threeAny = THREE as any;
         const _sRGBConst = _threeAny['SRGBColorSpace'] ?? _threeAny['sRGBEncoding'];
-        if (phys.map && 'encoding' in phys.map && _sRGBConst !== undefined) {
-          (phys.map as any).encoding = _sRGBConst;
+        if (newMat.map && 'encoding' in newMat.map && _sRGBConst !== undefined) {
+          (newMat.map as any).encoding = _sRGBConst;
         }
       }
 
@@ -530,14 +539,12 @@ export class ComputerComponent implements OnInit, AfterViewInit {
 
       const sceneEnv = (this.scene as any).environment;
       if (sceneEnv) {
-        (phys as any).envMap = sceneEnv;
-        (phys as any).envMapIntensity = 0.5;
+        newMat.envMap = sceneEnv;
+        newMat.envMapIntensity = 0.5;
       }
 
-      child.material = phys;
+      child.material = newMat;
       child.material.needsUpdate = true;
-      child.castShadow = true;
-      child.receiveShadow = true;
     });
   }
 
@@ -999,40 +1006,6 @@ export class ComputerComponent implements OnInit, AfterViewInit {
     try { document.body.style.overflow = ''; } catch (e) { }
   }
 
-  private setupScrollAnimation(): void {
-    if (!this.model) {
-      setTimeout(() => this.setupScrollAnimation(), 500);
-      return;
-    }
-
-    console.log('Configurazione animazione scroll...');
-
-    ScrollTrigger.getAll().forEach(trigger => trigger.kill());
-
-    const animationSection = document.querySelector('.animation-section') as HTMLElement;
-    if (animationSection) {
-      animationSection.style.position = 'absolute';
-      animationSection.style.width = '50%';
-      animationSection.style.height = '100%';
-      animationSection.style.right = '0';
-      animationSection.style.top = '0';
-    }
-
-    this.camera.position.set(0, 1.5, 4.3);
-    this.model.position.set(0.2, -1.5, -3);
-    this.model.scale.set(0.8, 0.8, 0.8);
-
-    this.originalCameraPosition.copy(this.camera.position);
-    if (this.controls) this.originalControlsTarget.copy(this.controls.target);
-
-    if (this.controls) {
-      this.controls.enabled = true;
-      this.controls.enableZoom = this.zoomEnabled;
-      this.controls.enableRotate = true;
-      this.controls.enablePan = true;
-      this.controls.update();
-    }
-  }
 
   private animate(): void {
     requestAnimationFrame(() => this.animate());
